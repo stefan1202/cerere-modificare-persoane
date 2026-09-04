@@ -8,7 +8,7 @@ Ce face site-ul:
 - colectează datele cererii (aceleași câmpuri ca Anexa 1 tipărită);
 - proprietarul desenează semnătura pe ecran;
 - în browser (nimic nu pleacă pe alt server) generează PDF-ul completat pe modelul oficial (`assets/cerere_template.pdf`), înglobează semnătura, data/ora și o amprentă SHA-256 a datelor trimise, apoi îl descarcă;
-- opțional, trimite datele + amprenta asociației prin Formspree (e-mail) și deschide un e-mail pre-completat către asociație.
+- trimite cererea asociației pe e-mail **cu PDF-ul semnat atașat** prin EmailJS (vezi `SETUP-EMAILJS.md`); alternativ, doar datele + amprenta prin Formspree, sau e-mail manual cu PDF-ul descărcat.
 
 Semnătura este o **semnătură electronică simplă** (desen + amprentă SHA-256 + marcaj de timp), nu o semnătură calificată eIDAS. Pentru cererile interne ale asociației este suficientă; pentru o semnătură calificată ar fi nevoie de un furnizor acreditat (certSIGN, DigiSign, Trans Sped etc.).
 
@@ -18,7 +18,8 @@ Semnătura este o **semnătură electronică simplă** (desen + amprentă SHA-25
 index.html                 pagina (formular + logică, fără backend)
 assets/cerere_template.pdf modelul PDF completabil (Anexa 1 + Anexa 2)
 assets/*.ttf               fonturi înglobate în PDF (diacritice)
-assets/*.js                pdf-lib + fontkit (găzduite local, fără CDN)
+assets/*.js                pdf-lib, fontkit, EmailJS SDK (găzduite local, fără CDN)
+SETUP-EMAILJS.md           configurarea trimiterii pe e-mail cu PDF atașat
 docs/                      procedura completă (PDF și DOCX)
 ```
 
@@ -28,22 +29,23 @@ Deschideți `index.html` și completați blocul `CONFIG` de la începutul script
 
 ```js
 const CONFIG = {
-  formspreeId: "",        // ex. "xabcdefg" — ID-ul formularului creat pe formspree.io
-  associationEmail: "",   // adresa de e-mail a asociației, pentru butonul „Deschide e-mail”
   associationName: "Asociația de Proprietari Bl. M53 Sc. 2",
+  associationEmail: "",   // adresa de e-mail a asociației
+  emailjs: { publicKey: "", serviceId: "", templateId: "" },  // vezi SETUP-EMAILJS.md
+  formspreeId: "",        // alternativă fără atașament (formspree.io)
 };
 ```
 
-1. **Formspree** (gratuit, ~50 trimiteri/lună): creați un cont pe <https://formspree.io>, adăugați un formular cu adresa de e-mail a asociației, copiați ID-ul (`https://formspree.io/f/<ID>`) în `formspreeId`. Fiecare cerere ajunge pe e-mail cu toate câmpurile și amprenta SHA-256; proprietarul primește copie (`_replyto`).
-2. **E-mail**: puneți adresa asociației în `associationEmail`. Dacă `formspreeId` rămâne gol, site-ul funcționează tot: proprietarul descarcă PDF-ul și îl trimite prin e-mail sau îl depune prin Aviziero.
+1. **EmailJS** (recomandat — PDF atașat): urmați pașii din [`SETUP-EMAILJS.md`](SETUP-EMAILJS.md). Planul Personal (9 $/lună) este necesar pentru atașamente.
+2. **Formspree** (fără atașament): creați un formular pe <https://formspree.io> și puneți ID-ul în `formspreeId`. Se folosește doar dacă EmailJS nu este configurat.
+3. **E-mail manual**: dacă nu configurați nimic, proprietarul descarcă PDF-ul și îl trimite la `associationEmail` (buton cu e-mail pre-completat) sau îl depune prin Aviziero.
 
 ## Publicare pe GitHub Pages
 
+Dublu-click pe `PUBLICA.cmd` (prima dată inițializează repo-ul; ulterior face commit + push pentru orice modificare). Echivalentul manual:
+
 ```bash
-git init
-git add .
-git commit -m "Formular online cerere modificare numar persoane"
-git branch -M main
+git init && git add . && git commit -m "Formular online" && git branch -M main
 git remote add origin git@github.com:stefan1202/cerere-modificare-persoane.git
 git push -u origin main
 ```

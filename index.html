@@ -160,14 +160,21 @@
 
 <script src="assets/pdf-lib.min.js"></script>
 <script src="assets/fontkit.umd.min.js"></script>
+<script src="assets/emailjs.min.js"></script>
 <script>
 /* ===================== CONFIGURARE ===================== */
 const CONFIG = {
-  // ID-ul formularului Formspree (https://formspree.io) — ex. "xabcdefg". Gol = nu se trimite online, doar PDF + e-mail.
-  formspreeId: "",
-  // Adresa de e-mail a asociației (pentru butonul „Trimite prin e-mail”). Gol = butonul nu apare.
-  associationEmail: "",
   associationName: "Asociația de Proprietari Bl. M53 Sc. 2",
+  // Adresa de e-mail a asociației (destinatarul cererilor și butonul „Deschide e-mail”). Gol = butonul nu apare.
+  associationEmail: "",
+  // EmailJS (https://www.emailjs.com) — trimite cererea pe e-mail CU PDF-ul semnat atașat. Vezi SETUP-EMAILJS.md.
+  emailjs: {
+    publicKey: "",     // Account → General → Public Key
+    serviceId: "",     // Email Services → ID-ul serviciului (ex. "service_abc123")
+    templateId: "",    // Email Templates → ID-ul șablonului (ex. "template_xyz789")
+  },
+  // Alternativă fără atașament: Formspree (https://formspree.io). Folosit doar dacă EmailJS nu este configurat.
+  formspreeId: "",
 };
 /* ======================================================= */
 
@@ -280,6 +287,28 @@ async function buildPdf(data, stamp, hash) {
   pdf.setProducer("Formular online AP Bl. M53 Sc. 2");
   return await pdf.save({ useObjectStreams: false });
 }
+const toBase64 = bytes => new Promise(res => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(new Blob([bytes], { type: "application/pdf" })); });
+const emailjsReady = () => !!(CONFIG.emailjs.publicKey && CONFIG.emailjs.serviceId && CONFIG.emailjs.templateId && window.emailjs);
+async function sendViaEmailJS(data, stamp, hash, bytes, fname) {
+  emailjs.init({ publicKey: CONFIG.emailjs.publicKey });
+  const rezumat = [
+    `Solicitant: ${data.nume_prenume} (${data.calitate}), ap. ${data.apartament}, sc. ${data.scara || "-"}, et. ${data.etaj || "-"}`,
+    `Telefon: ${data.telefon} · E-mail: ${data.email}`,
+    `Persoane: ${data.persoane_anterior} → ${data.persoane_nou}, de la ${fmtDate(data.data_schimbarii)}`,
+    `Motiv: ${data.motive.join("; ")}${data.motiv_altul ? " — " + data.motiv_altul : ""}${data.absenta_de_la ? ` (absență ${fmtDate(data.absenta_de_la)} – ${fmtDate(data.absenta_pana_la)})` : ""}`,
+    `Persoane în apartament: ${data.persoane.join("; ") || "—"}`,
+    `Documente: ${data.documente.join("; ") || "—"}${data.documente_altele ? " — " + data.documente_altele : ""}`,
+  ].join("\n");
+  const params = {
+    to_email: CONFIG.associationEmail, owner_email: data.email, owner_name: data.nume_prenume, reply_to: data.email,
+    apartament: data.apartament, scara: data.scara, etaj: data.etaj, telefon: data.telefon, calitate: data.calitate,
+    persoane_anterior: data.persoane_anterior, persoane_nou: data.persoane_nou, data_schimbarii: fmtDate(data.data_schimbarii),
+    motive: data.motive.join("; "), persoane: data.persoane.join("; "), documente: data.documente.join("; "),
+    rezumat, semnat_la: stamp.human, sha256: hash, fisier_pdf: fname,
+    pdf_attachment: await toBase64(bytes),
+  };
+  return emailjs.send(CONFIG.emailjs.serviceId, CONFIG.emailjs.templateId, params);
+}
 function download(bytes, name) { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" })); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000); }
 
 async function run(send) {
@@ -297,16 +326,20 @@ async function run(send) {
     const fname = `Cerere_persoane_ap${data.apartament}_${stamp.human.slice(0, 10).replaceAll(".", "-")}.pdf`;
     download(bytes, fname);
     let sent = false, sendMsg = "";
-    if (send && CONFIG.formspreeId) {
+    if (send && emailjsReady()) {
+      setStatus("info", "PDF generat. Se trimite cererea asociației (cu PDF-ul atașat)…");
+      try { await sendViaEmailJS(data, stamp, hash, bytes, fname); sent = true; sendMsg = "Cererea și PDF-ul semnat au fost transmise asociației prin e-mail; veți primi o copie la " + data.email + "."; }
+      catch (e) { console.error(e); sendMsg = "Trimiterea prin e-mail nu a reușit (" + (e?.text || e?.message || e) + "). Trimiteți PDF-ul descărcat prin e-mail sau prin Aviziero."; }
+    } else if (send && CONFIG.formspreeId) {
       setStatus("info", "PDF generat. Se trimite cererea asociației…");
       const body = { ...payload, motive: data.motive.join("; "), persoane: data.persoane.join("; "), documente: data.documente.join("; "), sha256: hash, fisier_pdf: fname, _subject: `Cerere modificare persoane — ap. ${data.apartament} — ${data.nume_prenume}`, _replyto: data.email };
       const res = await fetch(`https://formspree.io/f/${CONFIG.formspreeId}`, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify(body) });
       sent = res.ok;
-      sendMsg = sent ? "Cererea a fost transmisă asociației (veți primi o copie pe e-mail)." : "Trimiterea online nu a reușit (" + res.status + "). Trimiteți PDF-ul descărcat prin e-mail.";
+      sendMsg = sent ? "Cererea a fost transmisă asociației (fără PDF; veți primi o copie pe e-mail)." : "Trimiterea online nu a reușit (" + res.status + "). Trimiteți PDF-ul descărcat prin e-mail.";
     } else if (send) {
       sendMsg = "Trimiterea online nu este activată încă; trimiteți PDF-ul descărcat prin e-mail sau depuneți-l prin Aviziero.";
     }
-    const mail = CONFIG.associationEmail ? `<p><a href="mailto:${encodeURIComponent(CONFIG.associationEmail)}?subject=${encodeURIComponent("Cerere modificare număr persoane — ap. " + data.apartament)}&body=${encodeURIComponent(`Bună ziua,\n\nAtașat cererea de modificare a numărului de persoane pentru ap. ${data.apartament} (${data.persoane_anterior} → ${data.persoane_nou} persoane, de la ${fmtDate(data.data_schimbarii)}).\nAmprentă SHA-256: ${hash}\n\n${data.nume_prenume}\n${data.telefon}`)}">Deschide e-mail către asociație</a> (atașați manual fișierul <code>${fname}</code>)</p>` : "";
+    const mail = (CONFIG.associationEmail && !sent) ? `<p><a href="mailto:${encodeURIComponent(CONFIG.associationEmail)}?subject=${encodeURIComponent("Cerere modificare număr persoane — ap. " + data.apartament)}&body=${encodeURIComponent(`Bună ziua,\n\nAtașat cererea de modificare a numărului de persoane pentru ap. ${data.apartament} (${data.persoane_anterior} → ${data.persoane_nou} persoane, de la ${fmtDate(data.data_schimbarii)}).\nAmprentă SHA-256: ${hash}\n\n${data.nume_prenume}\n${data.telefon}`)}">Deschide e-mail către asociație</a> (atașați manual fișierul <code>${fname}</code>)</p>` : "";
     setStatus(sent || !send ? "ok" : "info", `<strong>${send ? "Gata." : "PDF generat."}</strong> Fișierul <code>${fname}</code> a fost descărcat. ${sendMsg}${mail}<p>Semnat la ${stamp.human}. Amprentă SHA-256: <code class="hash">${hash}</code></p><p class="muted">Păstrați PDF-ul: este dovada depunerii cererii în termenul legal de 10 zile.</p>`);
   } catch (e) {
     console.error(e); setStatus("err", "A apărut o eroare la generarea PDF-ului: " + (e.message || e) + ". Reîncărcați pagina și încercați din nou.");
